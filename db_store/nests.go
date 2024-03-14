@@ -378,6 +378,31 @@ func (st *NestsDBStore) IterateNestsConcurrently(ctx context.Context, opts Itera
 	return loopFail
 }
 
+func (st *NestsDBStore) DebugPolygons(ctx context.Context) error {
+	opts := IterateNestsConcurrentlyOpts{Concurrency: 4}
+
+	var minNestId int64
+
+	minNestIdRow := st.db.QueryRow("SELECT MIN(nest_id) from nests")
+	if err := minNestIdRow.Scan(&minNestId); err != nil {
+		return err
+	}
+
+	return st.IterateNestsConcurrently(ctx, opts, func(nest Nest) error {
+		const query = "SELECT count(*) FROM nests a where a.nest_id=? AND ST_Area(ST_Intersection(a.polygon, (SELECT polygon from nests b WHERE b.nest_id=?))) > 0"
+
+		var cnt int64
+
+		row := st.db.QueryRow(query, nest.NestId, minNestId)
+		if err := row.Scan(&cnt); err != nil {
+			st.logger.Infof("nest_id %d seems bad: %s", nest.NestId, err)
+			return nil
+		}
+
+		return nil
+	})
+}
+
 func (st *NestsDBStore) GetNestsWithoutPolygon(ctx context.Context, nestIds ...int64) (map[int64]*Nest, error) {
 	const baseQuery = "SELECT " + nestSelectColumnsNoPoly + " FROM nests WHERE "
 	const batchSize = 500
